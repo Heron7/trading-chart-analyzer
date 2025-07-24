@@ -1,10 +1,10 @@
-const Anthropic = require('@anthropic-ai/sdk');
+const { Anthropic } = require('@anthropic-ai/sdk');
 
 const anthropic = new Anthropic({
-  apiKey: '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'
+  apiKey: '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'
 });
 
-module.exports = async function handler(req, res) {
+module.exports = async (req, res) => {
   // Enable CORS for cross-origin requests
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -12,16 +12,16 @@ module.exports = async function handler(req, res) {
 
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
+    return res.status(200).end();
   }
 
   // Only allow POST requests
   if (req.method !== 'POST') {
-    res.status(405).json({ 
-      error: 'Method not allowed. Use POST to send chart images for analysis.' 
+    return res.status(405).json({ 
+      error: 'Method not allowed. Use POST to send chart images for analysis.',
+      allowedMethods: ['POST'],
+      endpoint: '/api/analyze'
     });
-    return;
   }
 
   try {
@@ -29,16 +29,17 @@ module.exports = async function handler(req, res) {
     
     // Validate input
     if (!images || !Array.isArray(images) || images.length !== 4) {
-      res.status(400).json({ 
+      return res.status(400).json({ 
         error: 'Please provide exactly 4 chart images in base64 format',
-        received: images ? images.length : 0
+        received: images ? images.length : 0,
+        expected: 4,
+        format: 'Array of base64 strings'
       });
-      return;
     }
 
-    console.log('Starting analysis of 4 chart images...');
+    console.log('Starting SMC analysis of 4 chart images...');
     
-    // Call Claude API
+    // Call Claude API for analysis
     const response = await anthropic.messages.create({
       model: "claude-4-sonnet-20250522",
       max_tokens: 4000,
@@ -69,7 +70,7 @@ module.exports = async function handler(req, res) {
                 "takeProfit1": "price",
                 "takeProfit2": "price", 
                 "takeProfit3": "price",
-                "rationale": "detailed explanation"
+                "rationale": "detailed explanation of the setup"
               },
               "riskManagement": {
                 "rrRatio1": "1:X format",
@@ -100,13 +101,17 @@ module.exports = async function handler(req, res) {
     const analysisText = response.content[0].text;
     const analysis = JSON.parse(analysisText);
     
-    console.log('Analysis completed successfully');
+    console.log('SMC analysis completed successfully');
     
-    res.status(200).json({ 
+    return res.status(200).json({ 
       success: true, 
       analysis,
-      timestamp: new Date().toISOString(),
-      processingTime: 'Completed'
+      metadata: {
+        timestamp: new Date().toISOString(),
+        timeframes: ['5m', '15m', '1h', '4h'],
+        analysisType: 'SMC/ICT',
+        processingTime: 'Completed'
+      }
     });
     
   } catch (error) {
@@ -114,21 +119,29 @@ module.exports = async function handler(req, res) {
     
     // Handle specific error types
     if (error.message.includes('JSON')) {
-      res.status(500).json({ 
+      return res.status(500).json({ 
         success: false, 
         error: 'Analysis completed but response format was invalid. Please try again.',
-        details: 'JSON parsing error'
+        errorType: 'JSON_PARSE_ERROR'
       });
     } else if (error.message.includes('rate limit')) {
-      res.status(429).json({ 
+      return res.status(429).json({ 
         success: false, 
         error: 'Rate limit exceeded. Please wait a moment and try again.',
-        details: 'API rate limit'
+        errorType: 'RATE_LIMIT',
+        retryAfter: '60 seconds'
+      });
+    } else if (error.message.includes('api key')) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'API authentication failed. Please check configuration.',
+        errorType: 'AUTH_ERROR'
       });
     } else {
-      res.status(500).json({ 
+      return res.status(500).json({ 
         success: false, 
         error: 'Analysis failed. Please check your images and try again.',
+        errorType: 'GENERAL_ERROR',
         details: error.message
       });
     }
