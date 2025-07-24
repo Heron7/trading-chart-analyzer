@@ -2,9 +2,13 @@
   "name": "trading-chart-analyzer",
   "version": "1.0.0",
   "description": "SMC Trading Analysis API with Claude AI",
-  "main": "api/analyze.js",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.2"
+    "@anthropic-ai/sdk": "^0.24.2",
+    "express": "^4.18.2"
   },
   "engines": {
     "node": "18.x"
