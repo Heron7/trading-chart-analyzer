@@ -1,93 +1,167 @@
-const express = require('express');
-const app = express();
+const http = require('http');
+const url = require('url');
+
 const PORT = process.env.PORT || 8080;
 
-// Middleware
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+console.log('Starting SMC Trading Analysis API...');
 
-// CORS
-app.use((req, res, next) => {
+// Create HTTP server
+const server = http.createServer((req, res) => {
+  console.log(`${req.method} ${req.url}`);
+  
+  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  res.setHeader('Content-Type', 'application/json');
+
+  const parsedUrl = url.parse(req.url, true);
+  const path = parsedUrl.pathname;
+  const method = req.method;
+
+  // Handle OPTIONS (preflight) requests
+  if (method === 'OPTIONS') {
+    res.statusCode = 200;
+    res.end();
+    return;
   }
-  next();
-});
 
-// Health check route
-app.get('/', (req, res) => {
-  console.log('Health check requested');
-  res.json({ 
-    status: 'SMC Trading Analysis API is running',
-    version: '1.0.0',
-    endpoint: '/api/analyze',
-    method: 'POST',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Import analyze function (with error handling)
-let analyzeHandler;
-try {
-  analyzeHandler = require('./api/analyze');
-  console.log('Analyze handler loaded successfully');
-} catch (error) {
-  console.error('Failed to load analyze handler:', error);
-  analyzeHandler = (req, res) => {
-    res.status(500).json({ 
-      error: 'Analyze handler not available',
-      details: error.message 
-    });
-  };
-}
-
-// API route
-app.post('/api/analyze', (req, res) => {
-  console.log('Analyze endpoint called');
-  try {
-    analyzeHandler(req, res);
-  } catch (error) {
-    console.error('Error in analyze handler:', error);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      details: error.message 
-    });
+  // Health check endpoint
+  if (path === '/' && method === 'GET') {
+    console.log('Health check requested');
+    res.statusCode = 200;
+    res.end(JSON.stringify({
+      status: 'SMC Trading Analysis API is running successfully',
+      version: '1.0.0',
+      endpoints: {
+        health: '/ (GET)',
+        analyze: '/api/analyze (POST)'
+      },
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime()
+    }));
+    return;
   }
-});
 
-// Handle GET requests to /api/analyze
-app.get('/api/analyze', (req, res) => {
-  res.status(405).json({
-    error: 'Method not allowed. Use POST to send chart images for analysis.',
-    allowedMethods: ['POST'],
-    endpoint: '/api/analyze'
-  });
-});
+  // API analyze endpoint
+  if (path === '/api/analyze') {
+    if (method === 'GET') {
+      console.log('GET request to /api/analyze - returning method not allowed');
+      res.statusCode = 405;
+      res.end(JSON.stringify({
+        error: 'Method not allowed. Use POST to send chart images for analysis.',
+        allowedMethods: ['POST'],
+        endpoint: '/api/analyze',
+        timestamp: new Date().toISOString()
+      }));
+      return;
+    }
 
-// 404 handler
-app.use('*', (req, res) => {
-  console.log('404 for path:', req.originalUrl);
-  res.status(404).json({
+    if (method === 'POST') {
+      console.log('POST request to /api/analyze - processing...');
+      let body = '';
+      
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          console.log('Received data, validating...');
+          
+          // Validate request
+          if (!data.images || !Array.isArray(data.images) || data.images.length !== 4) {
+            console.log('Invalid request - wrong number of images');
+            res.statusCode = 400;
+            res.end(JSON.stringify({
+              success: false,
+              error: 'Please provide exactly 4 chart images in base64 format',
+              received: data.images ? data.images.length : 0,
+              expected: 4
+            }));
+            return;
+          }
+
+          console.log('Request validated successfully');
+          
+          // For now, return success response (we'll add Claude later)
+          res.statusCode = 200;
+          res.end(JSON.stringify({
+            success: true,
+            message: 'API connection working! Ready for Claude integration.',
+            receivedImages: data.images.length,
+            timestamp: new Date().toISOString(),
+            status: 'Connection test successful - Claude integration will be added next'
+          }));
+          
+        } catch (error) {
+          console.error('Error parsing request body:', error);
+          res.statusCode = 400;
+          res.end(JSON.stringify({
+            success: false,
+            error: 'Invalid JSON in request body',
+            details: error.message
+          }));
+        }
+      });
+      
+      req.on('error', (error) => {
+        console.error('Request error:', error);
+        res.statusCode = 500;
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Request processing error',
+          details: error.message
+        }));
+      });
+      
+      return;
+    }
+  }
+
+  // 404 for all other paths
+  console.log(`404 - Path not found: ${path}`);
+  res.statusCode = 404;
+  res.end(JSON.stringify({
     error: 'Endpoint not found',
-    path: req.originalUrl,
-    availableEndpoints: ['/', '/api/analyze']
-  });
+    path: path,
+    method: method,
+    availableEndpoints: {
+      health: '/ (GET)',
+      analyze: '/api/analyze (POST)'
+    }
+  }));
 });
 
-// Error handler
-app.use((error, req, res, next) => {
-  console.error('Unhandled error:', error);
-  res.status(500).json({
-    error: 'Internal server error',
-    details: error.message
-  });
+// Error handling
+server.on('error', (error) => {
+  console.error('Server error:', error);
+  process.exit(1);
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 SMC Trading Analysis API running on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/`);
+// Start server
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 SMC Trading Analysis API successfully started`);
+  console.log(`📊 Port: ${PORT}`);
+  console.log(`🌐 Health check: http://localhost:${PORT}/`);
   console.log(`🔍 API endpoint: http://localhost:${PORT}/api/analyze`);
+  console.log(`⏰ Started at: ${new Date().toISOString()}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('Received SIGINT, shutting down gracefully');
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });
